@@ -192,6 +192,9 @@ message HardExampleMiner {
   // positive anchors and thus not bias the model towards having at least one
   // detection per image.
   optional int32 min_negatives_per_image = 5 [default=0];
+
+  // Whether to only use images without positive anchors for sampling negatives.
+  optional bool use_negative_images_only = 6 [default=false];
 }
 
 // Configuration for random example sampler.

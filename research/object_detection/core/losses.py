@@ -489,7 +489,8 @@ class HardExampleMiner(object):
                cls_loss_weight=0.05,
                loc_loss_weight=0.06,
                max_negatives_per_positive=None,
-               min_negatives_per_image=0):
+               min_negatives_per_image=0,
+               use_negative_images_only=False):
     """Constructor.
 
     The hard example mining implemented by this class can replicate the behavior
@@ -523,6 +524,8 @@ class HardExampleMiner(object):
         a given image. Setting this to a positive number allows sampling
         negatives in an image without any positive anchors and thus not biased
         towards at least one detection per image.
+      use_negative_images_only: whether to only use images without positive
+        anchors for sampling negatives.
     """
     self._num_hard_examples = num_hard_examples
     self._iou_threshold = iou_threshold
@@ -531,6 +534,7 @@ class HardExampleMiner(object):
     self._loc_loss_weight = loc_loss_weight
     self._max_negatives_per_positive = max_negatives_per_positive
     self._min_negatives_per_image = min_negatives_per_image
+    self._use_negative_images_only = use_negative_images_only
     if self._max_negatives_per_positive is not None:
       self._max_negatives_per_positive = float(self._max_negatives_per_positive)
     self._num_positives_list = None
@@ -602,11 +606,12 @@ class HardExampleMiner(object):
         num_hard_examples = detection_boxlist.num_boxes()
       selected_indices = tf.image.non_max_suppression(
           box_locations, image_losses, num_hard_examples, self._iou_threshold)
-      if self._max_negatives_per_positive is not None and match:
+      if (self._max_negatives_per_positive is not None or
+          self._use_negative_images_only) and match:
         (selected_indices, num_positives,
          num_negatives) = self._subsample_selection_to_desired_neg_pos_ratio(
              selected_indices, match, self._max_negatives_per_positive,
-             self._min_negatives_per_image)
+             self._min_negatives_per_image, self._use_negative_images_only)
         num_positives_list.append(num_positives)
         num_negatives_list.append(num_negatives)
       mined_location_losses.append(
@@ -634,7 +639,8 @@ class HardExampleMiner(object):
                                                     indices,
                                                     match,
                                                     max_negatives_per_positive,
-                                                    min_negatives_per_image=0):
+                                                    min_negatives_per_image=0,
+                                                    use_negative_images_only=False):
     """Subsample a collection of selected indices to a desired neg:pos ratio.
 
     This function takes a subset of M indices (indexing into a large anchor
@@ -659,6 +665,8 @@ class HardExampleMiner(object):
         each positive anchor.
       min_negatives_per_image: minimum number of negative anchors for a given
         image. Allow sampling negatives in image without any positive anchors.
+      use_negative_images_only: whether to only use images without positive
+        anchors for sampling negatives.
 
     Returns:
       selected_indices: An integer tensor of shape [M'] representing a
@@ -668,9 +676,14 @@ class HardExampleMiner(object):
       num_negatives: An integer tensor representing the number of negative
         examples in selected set of indices.
     """
+    if max_negatives_per_positive is None:
+      max_negatives_per_positive = 0
     positives_indicator = tf.gather(match.matched_column_indicator(), indices)
     negatives_indicator = tf.gather(match.unmatched_column_indicator(), indices)
     num_positives = tf.reduce_sum(tf.cast(positives_indicator, dtype=tf.int32))
+    if use_negative_images_only:
+        has_positives = tf.greater(num_positives, 0)
+        negatives_indicator = tf.logical_and(negatives_indicator, tf.logical_not(has_positives))
     max_negatives = tf.maximum(
         min_negatives_per_image,
         tf.cast(max_negatives_per_positive *
